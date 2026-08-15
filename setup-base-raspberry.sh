@@ -4,45 +4,98 @@ set -e
 
 # ============================================================
 # SETUP BASE - RASPBERRY PI
+#
+# - Configura teclado Português Brasil ABNT2
+# - Habilita SSH
+# - Configura IP estático
+# - Valida Interface, IP, Gateway e DNS
+# - Faz backup da configuração de rede
+# - Comenta configurações antigas
+# - Adiciona nova configuração no final do arquivo
 # ============================================================
 
-# ------------------------------------------------------------
-# Verificar terminal interativo
-# ------------------------------------------------------------
-
-if [ ! -e /dev/tty ]; then
-    echo "Erro: terminal interativo não encontrado."
-    echo
-    echo "Execute o script diretamente no terminal."
-    exit 1
-fi
-
-# ------------------------------------------------------------
-# Verificar root
-# ------------------------------------------------------------
+# ============================================================
+# VERIFICAR ROOT
+# ============================================================
 
 if [ "$EUID" -ne 0 ]; then
     echo
-    echo "Este script precisa ser executado como root."
+    echo "Erro: execute este script como root."
     echo
-    echo "Execute:"
+    echo "Exemplo:"
     echo
-    echo "curl -fsSL https://raw.githubusercontent.com/weto/rasp-project/main/setup-base-raspberry | sudo bash"
+    echo "sudo bash setup-base-raspberry"
     echo
     exit 1
 fi
 
-# ------------------------------------------------------------
-# Função para ler do terminal
-# ------------------------------------------------------------
+# ============================================================
+# TERMINAL
+# ============================================================
+
+if [ ! -e /dev/tty ]; then
+    echo "Erro: terminal interativo não encontrado."
+    exit 1
+fi
+
+# ============================================================
+# FUNÇÃO PARA PERGUNTAR AO USUÁRIO
+# ============================================================
 
 ask() {
     local PROMPT="$1"
     local VARIABLE="$2"
 
     printf "%s" "$PROMPT" > /dev/tty
-
     IFS= read -r "$VARIABLE" < /dev/tty
+}
+
+# ============================================================
+# FUNÇÃO VALIDAR IPV4
+# ============================================================
+
+validar_ipv4() {
+
+    local IP="$1"
+
+    if ! [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 1
+    fi
+
+    IFS='.' read -r O1 O2 O3 O4 <<< "$IP"
+
+    for OCTET in "$O1" "$O2" "$O3" "$O4"; do
+
+        if ! [[ "$OCTET" =~ ^[0-9]+$ ]]; then
+            return 1
+        fi
+
+        if (( OCTET < 0 || OCTET > 255 )); then
+            return 1
+        fi
+
+    done
+
+    return 0
+}
+
+# ============================================================
+# FUNÇÃO VALIDAR INTERFACE
+# ============================================================
+
+validar_interface() {
+
+    local IFACE="$1"
+
+    if [ -z "$IFACE" ]; then
+        return 1
+    fi
+
+    if ! ip link show "$IFACE" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    return 0
 }
 
 # ============================================================
@@ -51,42 +104,77 @@ ask() {
 
 clear
 
+echo
 echo "=============================================="
 echo "       SETUP BASE - RASPBERRY PI"
 echo "=============================================="
 echo
-echo "Configurações:"
+echo "Este script irá configurar:"
 echo
+echo "  - Interface de rede"
+echo "  - IP estático"
+echo "  - Gateway"
+echo "  - DNS"
 echo "  - Teclado Português Brasil ABNT2"
 echo "  - SSH"
-echo "  - IP estático"
 echo
 echo "=============================================="
 echo
 
 # ============================================================
-# DETECTAR INTERFACE
+# DETECTAR CONFIGURAÇÃO ATUAL
 # ============================================================
 
-INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
+CURRENT_INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
 
-if [ -z "$INTERFACE" ]; then
-    echo "Erro: interface de rede não encontrada."
-    exit 1
+CURRENT_IP=""
+
+if [ -n "$CURRENT_INTERFACE" ]; then
+
+    CURRENT_IP=$(ip -4 addr show "$CURRENT_INTERFACE" 2>/dev/null |
+        awk '/inet / {print $2}' |
+        cut -d/ -f1 |
+        head -n1)
+
 fi
-
-CURRENT_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null |
-    awk '/inet / {print $2}' |
-    cut -d/ -f1 |
-    head -n1)
 
 CURRENT_GATEWAY=$(ip route |
     awk '/default/ {print $3; exit}')
 
-echo "Interface : $INTERFACE"
-echo "IP atual  : ${CURRENT_IP:-não detectado}"
-echo "Gateway   : ${CURRENT_GATEWAY:-não detectado}"
+CURRENT_DNS="8.8.8.8"
+
+echo "Configuração atual detectada:"
 echo
+echo "  Interface : ${CURRENT_INTERFACE:-não detectada}"
+echo "  IP        : ${CURRENT_IP:-não detectado}"
+echo "  Gateway   : ${CURRENT_GATEWAY:-não detectado}"
+echo "  DNS       : $CURRENT_DNS"
+echo
+
+# ============================================================
+# PERGUNTAR INTERFACE
+# ============================================================
+
+while true; do
+
+    ask "Interface [$CURRENT_INTERFACE]: " INTERFACE
+
+    if [ -z "$INTERFACE" ]; then
+        INTERFACE="$CURRENT_INTERFACE"
+    fi
+
+    if validar_interface "$INTERFACE"; then
+        break
+    fi
+
+    echo
+    echo "Erro: a interface '$INTERFACE' não existe."
+    echo
+    echo "Interfaces disponíveis:"
+    ip -br link
+    echo
+
+done
 
 # ============================================================
 # PERGUNTAR IP
@@ -94,43 +182,24 @@ echo
 
 while true; do
 
-    ask "Digite o IP estático que deseja utilizar: " STATIC_IP
+    ask "IP estático: " STATIC_IP
+
+    if validar_ipv4 "$STATIC_IP"; then
+        break
+    fi
 
     echo
-
-    if [ -z "$STATIC_IP" ]; then
-        echo "Erro: nenhum IP informado."
-        echo
-        continue
-    fi
-
-    # Verificar formato
-    if ! [[ "$STATIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "Erro: formato de IP inválido."
-        echo
-        continue
-    fi
-
-    # Validar octetos
-    IFS='.' read -r O1 O2 O3 O4 <<< "$STATIC_IP"
-
-    if (( O1 > 255 || O2 > 255 || O3 > 255 || O4 > 255 )); then
-        echo "Erro: IP inválido."
-        echo
-        continue
-    fi
-
-    break
+    echo "Erro: IP inválido."
+    echo "Exemplo: 192.168.1.50"
+    echo
 
 done
 
 # ============================================================
-# GATEWAY
+# PERGUNTAR GATEWAY
 # ============================================================
 
-echo
-
-if [ -n "$CURRENT_GATEWAY" ]; then
+while true; do
 
     ask "Gateway [$CURRENT_GATEWAY]: " GATEWAY
 
@@ -138,31 +207,45 @@ if [ -n "$CURRENT_GATEWAY" ]; then
         GATEWAY="$CURRENT_GATEWAY"
     fi
 
-else
+    if validar_ipv4 "$GATEWAY"; then
+        break
+    fi
 
-    ask "Digite o gateway: " GATEWAY
+    echo
+    echo "Erro: Gateway inválido."
+    echo
 
-fi
-
-# ============================================================
-# DNS
-# ============================================================
-
-echo
-
-ask "Servidor DNS [8.8.8.8]: " DNS
-
-if [ -z "$DNS" ]; then
-    DNS="8.8.8.8"
-fi
+done
 
 # ============================================================
-# CONFIRMAÇÃO
+# PERGUNTAR DNS
+# ============================================================
+
+while true; do
+
+    ask "DNS [$CURRENT_DNS]: " DNS
+
+    if [ -z "$DNS" ]; then
+        DNS="$CURRENT_DNS"
+    fi
+
+    if validar_ipv4 "$DNS"; then
+        break
+    fi
+
+    echo
+    echo "Erro: DNS inválido."
+    echo
+
+done
+
+# ============================================================
+# MOSTRAR CONFIGURAÇÃO
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       CONFIGURAÇÃO DE REDE"
+echo "       NOVA CONFIGURAÇÃO"
 echo "=============================================="
 echo
 echo "Interface : $INTERFACE"
@@ -171,33 +254,37 @@ echo "Máscara   : /24"
 echo "Gateway   : $GATEWAY"
 echo "DNS       : $DNS"
 echo
-echo "=============================================="
-echo
 
-ask "Aplicar esta configuração? [s/N]: " CONFIRM
+# ============================================================
+# CONFIRMAR
+# ============================================================
+
+ask "Gravar esta configuração? [s/N]: " CONFIRM
 
 if [[ ! "$CONFIRM" =~ ^[Ss]$ ]]; then
+
     echo
     echo "Operação cancelada."
     exit 0
+
 fi
 
 # ============================================================
-# INSTALAÇÃO
+# INSTALAR PACOTES
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       INSTALAÇÃO DOS PACOTES"
+echo "       INSTALAÇÃO"
 echo "=============================================="
 echo
 
-echo "==> Atualizando pacotes..."
+echo "==> Atualizando lista de pacotes..."
 
 apt-get update
 
 echo
-echo "==> Instalando teclado e SSH..."
+echo "==> Instalando suporte ao teclado e SSH..."
 
 apt-get install -y \
     keyboard-configuration \
@@ -209,7 +296,7 @@ apt-get install -y \
 # ============================================================
 
 echo
-echo "==> Configurando teclado ABNT2..."
+echo "==> Configurando teclado Português Brasil ABNT2..."
 
 cat > /etc/default/keyboard <<'EOF'
 XKBMODEL="abnt2"
@@ -232,18 +319,18 @@ systemctl enable ssh
 systemctl start ssh
 
 # ============================================================
-# CONFIGURAR REDE
+# CONFIGURAÇÃO DE REDE
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       CONFIGURANDO IP ESTÁTICO"
+echo "       CONFIGURAÇÃO DE REDE"
 echo "=============================================="
 echo
 
-# ------------------------------------------------------------
-# NetworkManager
-# ------------------------------------------------------------
+# ============================================================
+# NETWORKMANAGER
+# ============================================================
 
 if command -v nmcli >/dev/null 2>&1 &&
    systemctl is-active --quiet NetworkManager; then
@@ -255,6 +342,8 @@ if command -v nmcli >/dev/null 2>&1 &&
 
     if [ -z "$CONNECTION" ]; then
 
+        echo "Criando conexão..."
+
         nmcli connection add \
             type ethernet \
             ifname "$INTERFACE" \
@@ -264,6 +353,13 @@ if command -v nmcli >/dev/null 2>&1 &&
 
     fi
 
+    echo
+    echo "Configuração atual do NetworkManager:"
+    nmcli connection show "$CONNECTION"
+
+    echo
+    echo "==> Gravando nova configuração..."
+
     nmcli connection modify "$CONNECTION" \
         ipv4.method manual \
         ipv4.addresses "$STATIC_IP/24" \
@@ -271,71 +367,226 @@ if command -v nmcli >/dev/null 2>&1 &&
         ipv4.dns "$DNS" \
         connection.autoconnect yes
 
-    echo "Aplicando configuração..."
+    echo
+    echo "==> Aplicando configuração..."
 
     nmcli connection up "$CONNECTION"
 
-# ------------------------------------------------------------
-# dhcpcd
-# ------------------------------------------------------------
+# ============================================================
+# DHCPCD
+# ============================================================
 
 elif systemctl list-unit-files |
     grep -q "^dhcpcd.service"; then
 
     echo "dhcpcd detectado."
 
-    BACKUP="/etc/dhcpcd.conf.backup.$(date +%Y%m%d-%H%M%S)"
+    DHCPCD_CONF="/etc/dhcpcd.conf"
 
-    cp /etc/dhcpcd.conf "$BACKUP"
+    # --------------------------------------------------------
+    # BACKUP
+    # --------------------------------------------------------
 
-    echo "Backup:"
+    BACKUP="${DHCPCD_CONF}.backup.$(date +%Y%m%d-%H%M%S)"
+
+    cp "$DHCPCD_CONF" "$BACKUP"
+
+    echo
+    echo "Backup criado:"
     echo "$BACKUP"
 
-    cat >> /etc/dhcpcd.conf <<EOF
+    # --------------------------------------------------------
+    # CRIAR ARQUIVO TEMPORÁRIO
+    # --------------------------------------------------------
 
-# Configuração adicionada pelo setup-base-raspberry
+    TEMP_FILE=$(mktemp)
+
+    # --------------------------------------------------------
+    # COMENTAR CONFIGURAÇÕES EXISTENTES
+    # --------------------------------------------------------
+
+    echo
+    echo "==> Procurando configurações anteriores..."
+
+    awk '
+    /^[[:space:]]*interface[[:space:]]+/ {
+        print "# [comentado pelo setup-base-raspberry] " $0
+        next
+    }
+
+    /^[[:space:]]*static[[:space:]]+ip_address=/ {
+        print "# [comentado pelo setup-base-raspberry] " $0
+        next
+    }
+
+    /^[[:space:]]*static[[:space:]]+routers=/ {
+        print "# [comentado pelo setup-base-raspberry] " $0
+        next
+    }
+
+    /^[[:space:]]*static[[:space:]]+domain_name_servers=/ {
+        print "# [comentado pelo setup-base-raspberry] " $0
+        next
+    }
+
+    { print }
+    ' "$DHCPCD_CONF" > "$TEMP_FILE"
+
+    # --------------------------------------------------------
+    # ADICIONAR NOVA CONFIGURAÇÃO NO FINAL
+    # --------------------------------------------------------
+
+    cat >> "$TEMP_FILE" <<EOF
+
+
+# ============================================================
+# CONFIGURAÇÃO DE REDE
+# Adicionada pelo setup-base-raspberry
+# Data: $(date '+%Y-%m-%d %H:%M:%S')
+# ============================================================
+
 interface $INTERFACE
 static ip_address=$STATIC_IP/24
 static routers=$GATEWAY
 static domain_name_servers=$DNS
+
+# ============================================================
 EOF
 
+    # --------------------------------------------------------
+    # VALIDAR ANTES DE GRAVAR
+    # --------------------------------------------------------
+
+    echo
+    echo "==> Validando configuração antes de gravar..."
+
+    if grep -q "^interface $INTERFACE$" "$TEMP_FILE" &&
+       grep -q "^static ip_address=$STATIC_IP/24$" "$TEMP_FILE" &&
+       grep -q "^static routers=$GATEWAY$" "$TEMP_FILE" &&
+       grep -q "^static domain_name_servers=$DNS$" "$TEMP_FILE"; then
+
+        echo "Configuração validada."
+
+    else
+
+        echo
+        echo "ERRO: a nova configuração não passou na validação."
+        echo
+        rm -f "$TEMP_FILE"
+        exit 1
+
+    fi
+
+    # --------------------------------------------------------
+    # GRAVAR
+    # --------------------------------------------------------
+
+    echo
+    echo "==> Gravando configuração..."
+
+    cp "$TEMP_FILE" "$DHCPCD_CONF"
+
+    rm -f "$TEMP_FILE"
+
+    # --------------------------------------------------------
+    # VALIDAR ARQUIVO FINAL
+    # --------------------------------------------------------
+
+    echo
+    echo "==> Validando arquivo final..."
+
+    if grep -q "^interface $INTERFACE$" "$DHCPCD_CONF" &&
+       grep -q "^static ip_address=$STATIC_IP/24$" "$DHCPCD_CONF" &&
+       grep -q "^static routers=$GATEWAY$" "$DHCPCD_CONF" &&
+       grep -q "^static domain_name_servers=$DNS$" "$DHCPCD_CONF"; then
+
+        echo "Arquivo validado com sucesso."
+
+    else
+
+        echo
+        echo "ERRO: configuração não encontrada no arquivo."
+        echo "Restaurando backup..."
+
+        cp "$BACKUP" "$DHCPCD_CONF"
+
+        exit 1
+
+    fi
+
+    # --------------------------------------------------------
+    # REINICIAR DHCPCD
+    # --------------------------------------------------------
+
+    echo
+    echo "==> Reiniciando dhcpcd..."
+
     systemctl restart dhcpcd
+
+# ============================================================
+# GERENCIADOR NÃO ENCONTRADO
+# ============================================================
 
 else
 
     echo
-    echo "Erro: NetworkManager ou dhcpcd não encontrado."
+    echo "ERRO: nenhum gerenciador de rede suportado foi encontrado."
+    echo
+    echo "Esperado:"
+    echo "  - NetworkManager"
+    echo "  - dhcpcd"
+    echo
+
     exit 1
 
 fi
 
 # ============================================================
-# FINAL
+# AGUARDAR REDE
 # ============================================================
 
-sleep 3
+echo
+echo "==> Aguardando rede..."
+
+sleep 5
+
+# ============================================================
+# VERIFICAR CONFIGURAÇÃO FINAL
+# ============================================================
 
 FINAL_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null |
     awk '/inet / {print $2}' |
     cut -d/ -f1 |
     head -n1)
 
+FINAL_GATEWAY=$(ip route |
+    awk '/default/ {print $3; exit}')
+
+# ============================================================
+# RESULTADO
+# ============================================================
+
 echo
 echo "=============================================="
 echo "       CONFIGURAÇÃO CONCLUÍDA"
 echo "=============================================="
 echo
-echo "Teclado : Português Brasil ABNT2"
-echo "SSH     : habilitado"
+echo "Teclado:"
+echo "  Português Brasil ABNT2"
+echo
+echo "SSH:"
+echo "  Habilitado"
 echo
 echo "Rede:"
 echo "  Interface : $INTERFACE"
 echo "  IP        : ${FINAL_IP:-$STATIC_IP}"
-echo "  Gateway   : $GATEWAY"
+echo "  Gateway   : ${FINAL_GATEWAY:-$GATEWAY}"
 echo "  DNS       : $DNS"
+echo
+echo "=============================================="
 echo
 echo "Acesso SSH:"
 echo
 echo "  ssh $REAL_USER@$STATIC_IP"
 echo
+echo "=============================================="
