@@ -2,13 +2,18 @@
 
 set -e
 
-echo "==> Configurando teclado para Português do Brasil..."
+if [ "$EUID" -ne 0 ]; then
+    echo "Execute este script como root: sudo $0"
+    exit 1
+fi
 
-# Instala/garante os pacotes necessários
+echo "==> Atualizando lista de pacotes..."
 apt-get update
+
+echo "==> Instalando suporte ao teclado e SSH..."
 apt-get install -y keyboard-configuration console-setup openssh-server
 
-# Configura teclado ABNT2 / Português do Brasil
+echo "==> Configurando teclado Português do Brasil ABNT2..."
 cat > /etc/default/keyboard <<'EOF'
 XKBMODEL="abnt2"
 XKBLAYOUT="br"
@@ -17,30 +22,20 @@ XKBOPTIONS=""
 BACKSPACE="guess"
 EOF
 
-# Aplica a configuração do teclado
-dpkg-reconfigure -f noninteractive keyboard-configuration || true
-setupcon || true
-
 echo "==> Habilitando SSH..."
-
-# Habilita e inicia o serviço SSH
 systemctl enable ssh
-systemctl restart ssh
-
-# Garante que o SSH esteja ativo
-systemctl is-active --quiet ssh
+systemctl start ssh
 
 echo
 echo "========================================"
-echo " Configuração concluída!"
+echo " CONFIGURAÇÃO CONCLUÍDA"
 echo "========================================"
 echo
 echo "Teclado: Português do Brasil (ABNT2)"
-echo "SSH: habilitado e iniciado"
+echo "SSH: habilitado"
 echo
-echo "IP(s) do Raspberry Pi:"
+echo "IP do Raspberry Pi:"
 hostname -I
 echo
-echo "Para conectar via SSH:"
-echo "ssh <usuario>@$(hostname -I | awk '{print $1}')"
-echo
+echo "Use:"
+echo "ssh $(whoami)@$(hostname -I | awk '{print $1}')"
