@@ -1,0 +1,46 @@
+#!/bin/bash
+
+set -e
+
+echo "==> Configurando teclado para Português do Brasil..."
+
+# Instala/garante os pacotes necessários
+apt-get update
+apt-get install -y keyboard-configuration console-setup openssh-server
+
+# Configura teclado ABNT2 / Português do Brasil
+cat > /etc/default/keyboard <<'EOF'
+XKBMODEL="abnt2"
+XKBLAYOUT="br"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
+
+# Aplica a configuração do teclado
+dpkg-reconfigure -f noninteractive keyboard-configuration || true
+setupcon || true
+
+echo "==> Habilitando SSH..."
+
+# Habilita e inicia o serviço SSH
+systemctl enable ssh
+systemctl restart ssh
+
+# Garante que o SSH esteja ativo
+systemctl is-active --quiet ssh
+
+echo
+echo "========================================"
+echo " Configuração concluída!"
+echo "========================================"
+echo
+echo "Teclado: Português do Brasil (ABNT2)"
+echo "SSH: habilitado e iniciado"
+echo
+echo "IP(s) do Raspberry Pi:"
+hostname -I
+echo
+echo "Para conectar via SSH:"
+echo "ssh <usuario>@$(hostname -I | awk '{print $1}')"
+echo
