@@ -9,9 +9,9 @@ set -e
 # - Habilita SSH
 # - Configura IP estático
 # - Valida Interface, IP, Gateway e DNS
-# - Faz backup da configuração de rede
+# - Faz backup da Configuracao de rede
 # - Comenta configurações antigas
-# - Adiciona nova configuração no final do arquivo
+# - Adiciona nova Configuracao no final do arquivo
 # ============================================================
 
 # ============================================================
@@ -122,7 +122,7 @@ echo "=============================================="
 echo
 
 # ============================================================
-# DETECTAR CONFIGURAÇÃO ATUAL
+# DETECTAR Configuracao ATUAL
 # ============================================================
 
 CURRENT_INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
@@ -143,7 +143,7 @@ CURRENT_GATEWAY=$(ip route |
 
 CURRENT_DNS="8.8.8.8"
 
-echo "Configuração atual detectada:"
+echo "Configuracao atual detectada:"
 echo
 echo "  Interface : ${CURRENT_INTERFACE:-não detectada}"
 echo "  IP        : ${CURRENT_IP:-não detectado}"
@@ -240,12 +240,12 @@ while true; do
 done
 
 # ============================================================
-# MOSTRAR CONFIGURAÇÃO
+# MOSTRAR Configuracao
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       NOVA CONFIGURAÇÃO"
+echo "       NOVA Configuracao"
 echo "=============================================="
 echo
 echo "Interface : $INTERFACE"
@@ -259,7 +259,7 @@ echo
 # CONFIRMAR
 # ============================================================
 
-ask "Gravar esta configuração? [s/N]: " CONFIRM
+ask "Gravar esta Configuracao? [s/N]: " CONFIRM
 
 if [[ ! "$CONFIRM" =~ ^[Ss]$ ]]; then
 
@@ -275,7 +275,7 @@ fi
 
 echo
 echo "=============================================="
-echo "       INSTALAÇÃO"
+echo "       INSTALACAO"
 echo "=============================================="
 echo
 
@@ -319,12 +319,12 @@ systemctl enable ssh
 systemctl start ssh
 
 # ============================================================
-# CONFIGURAÇÃO DE REDE
+# Configuracao DE REDE
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       CONFIGURAÇÃO DE REDE"
+echo "       Configuracao DE REDE"
 echo "=============================================="
 echo
 
@@ -354,11 +354,11 @@ if command -v nmcli >/dev/null 2>&1 &&
     fi
 
     echo
-    echo "Configuração atual do NetworkManager:"
+    echo "Configuracao atual do NetworkManager:"
     nmcli connection show "$CONNECTION"
 
     echo
-    echo "==> Gravando nova configuração..."
+    echo "==> Gravando nova Configuracao..."
 
     nmcli connection modify "$CONNECTION" \
         ipv4.method manual \
@@ -368,7 +368,7 @@ if command -v nmcli >/dev/null 2>&1 &&
         connection.autoconnect yes
 
     echo
-    echo "==> Aplicando configuração..."
+    echo "==> Aplicando Configuracao..."
 
     nmcli connection up "$CONNECTION"
 
@@ -433,14 +433,14 @@ elif systemctl list-unit-files |
     ' "$DHCPCD_CONF" > "$TEMP_FILE"
 
     # --------------------------------------------------------
-    # ADICIONAR NOVA CONFIGURAÇÃO NO FINAL
+    # ADICIONAR NOVA Configuracao NO FINAL
     # --------------------------------------------------------
 
     cat >> "$TEMP_FILE" <<EOF
 
 
 # ============================================================
-# CONFIGURAÇÃO DE REDE
+# Configuracao DE REDE
 # Adicionada pelo setup-base-raspberry
 # Data: $(date '+%Y-%m-%d %H:%M:%S')
 # ============================================================
@@ -458,19 +458,19 @@ EOF
     # --------------------------------------------------------
 
     echo
-    echo "==> Validando configuração antes de gravar..."
+    echo "==> Validando Configuracao antes de gravar..."
 
     if grep -q "^interface $INTERFACE$" "$TEMP_FILE" &&
        grep -q "^static ip_address=$STATIC_IP/24$" "$TEMP_FILE" &&
        grep -q "^static routers=$GATEWAY$" "$TEMP_FILE" &&
        grep -q "^static domain_name_servers=$GATEWAY $DNS$" "$TEMP_FILE"; then
 
-        echo "Configuração validada."
+        echo "Configuracao validada."
 
     else
 
         echo
-        echo "ERRO: a nova configuração não passou na validação."
+        echo "ERRO: a nova Configuracao não passou na validação."
         echo
         rm -f "$TEMP_FILE"
         exit 1
@@ -482,7 +482,7 @@ EOF
     # --------------------------------------------------------
 
     echo
-    echo "==> Gravando configuração..."
+    echo "==> Gravando Configuracao..."
 
     cp "$TEMP_FILE" "$DHCPCD_CONF"
 
@@ -505,7 +505,7 @@ EOF
     else
 
         echo
-        echo "ERRO: configuração não encontrada no arquivo."
+        echo "ERRO: Configuracao não encontrada no arquivo."
         echo "Restaurando backup..."
 
         cp "$BACKUP" "$DHCPCD_CONF"
@@ -551,7 +551,7 @@ echo "==> Aguardando rede..."
 sleep 5
 
 # ============================================================
-# VERIFICAR CONFIGURAÇÃO FINAL
+# VERIFICAR Configuracao FINAL
 # ============================================================
 
 FINAL_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null |
@@ -568,7 +568,7 @@ FINAL_GATEWAY=$(ip route |
 
 echo
 echo "=============================================="
-echo "       CONFIGURAÇÃO CONCLUÍDA"
+echo "       Configuracao CONCLUÍDA"
 echo "=============================================="
 echo
 echo "Teclado:"
