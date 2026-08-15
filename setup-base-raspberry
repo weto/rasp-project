@@ -26,6 +26,168 @@ echo "==> Habilitando SSH..."
 systemctl enable ssh
 systemctl start ssh
 
+# ============================================================
+# CONFIGURAÇÃO DO IP ESTÁTICO
+# ============================================================
+
+echo
+echo "========================================"
+echo " CONFIGURAÇÃO DO IP ESTÁTICO"
+echo "========================================"
+echo
+
+# Detectar interface de rede
+INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
+
+if [ -z "$INTERFACE" ]; then
+    echo "Erro: não foi possível detectar a interface de rede."
+    exit 1
+fi
+
+# Detectar gateway atual
+GATEWAY=$(ip route | awk '/default/ {print $3; exit}')
+
+# Detectar IP atual
+CURRENT_IP=$(ip -4 addr show "$INTERFACE" | \
+    awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+
+echo "Interface detectada : $INTERFACE"
+echo "IP atual             : ${CURRENT_IP:-não detectado}"
+echo "Gateway atual        : ${GATEWAY:-não detectado}"
+echo
+
+# Perguntar IP
+read -rp "Digite o IP estático que deseja utilizar: " STATIC_IP
+
+if [ -z "$STATIC_IP" ]; then
+    echo "Erro: nenhum IP foi informado."
+    exit 1
+fi
+
+# Validação básica do IPv4
+if ! [[ "$STATIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "Erro: endereço IP inválido."
+    exit 1
+fi
+
+# Validar cada octeto
+IFS='.' read -r -a OCTETS <<< "$STATIC_IP"
+
+for OCTET in "${OCTETS[@]}"; do
+    if [ "$OCTET" -gt 255 ]; then
+        echo "Erro: endereço IP inválido."
+        exit 1
+    fi
+done
+
+# Caso não tenha gateway, perguntar
+if [ -z "$GATEWAY" ]; then
+    read -rp "Digite o gateway da rede: " GATEWAY
+fi
+
+# DNS
+DNS="8.8.8.8"
+
+echo
+echo "========================================"
+echo " CONFIGURAÇÃO SELECIONADA"
+echo "========================================"
+echo
+echo "Interface : $INTERFACE"
+echo "IP        : $STATIC_IP"
+echo "Máscara   : /24"
+echo "Gateway   : $GATEWAY"
+echo "DNS       : $DNS"
+echo
+
+read -rp "Aplicar esta configuração? [s/N]: " CONFIRM
+
+if [[ ! "$CONFIRM" =~ ^[Ss]$ ]]; then
+    echo
+    echo "Configuração de IP cancelada."
+else
+
+    echo
+    echo "==> Configurando IP estático..."
+
+    # --------------------------------------------------------
+    # NetworkManager
+    # --------------------------------------------------------
+
+    if command -v nmcli >/dev/null 2>&1 && \
+       systemctl is-active --quiet NetworkManager; then
+
+        echo "NetworkManager detectado."
+
+        CONNECTION=$(nmcli -t -f NAME,DEVICE connection show | \
+            awk -F: -v dev="$INTERFACE" '$2 == dev {print $1; exit}')
+
+        if [ -z "$CONNECTION" ]; then
+
+            echo "Criando conexão para $INTERFACE..."
+
+            nmcli connection add \
+                type ethernet \
+                ifname "$INTERFACE" \
+                con-name "static-$INTERFACE"
+
+            CONNECTION="static-$INTERFACE"
+        fi
+
+        nmcli connection modify "$CONNECTION" \
+            ipv4.method manual \
+            ipv4.addresses "$STATIC_IP/24" \
+            ipv4.gateway "$GATEWAY" \
+            ipv4.dns "$DNS"
+
+        echo "==> Aplicando configuração..."
+
+        nmcli connection up "$CONNECTION"
+
+    # --------------------------------------------------------
+    # dhcpcd
+    # --------------------------------------------------------
+
+    elif systemctl list-unit-files | grep -q "^dhcpcd.service"; then
+
+        echo "dhcpcd detectado."
+
+        BACKUP="/etc/dhcpcd.conf.backup.$(date +%Y%m%d-%H%M%S)"
+
+        cp /etc/dhcpcd.conf "$BACKUP"
+
+        echo "Backup criado:"
+        echo "$BACKUP"
+
+        cat >> /etc/dhcpcd.conf <<EOF
+
+# Configuração IP estático adicionada pelo setup
+interface $INTERFACE
+static ip_address=$STATIC_IP/24
+static routers=$GATEWAY
+static domain_name_servers=$DNS
+EOF
+
+        echo "==> Reiniciando dhcpcd..."
+
+        systemctl restart dhcpcd
+
+    else
+
+        echo
+        echo "ERRO: não foi possível identificar o gerenciador"
+        echo "de rede (NetworkManager ou dhcpcd)."
+        echo
+        echo "O IP estático NÃO foi configurado."
+        exit 1
+    fi
+
+fi
+
+# ============================================================
+# RESULTADO
+# ============================================================
+
 echo
 echo "========================================"
 echo " CONFIGURAÇÃO CONCLUÍDA"
@@ -34,8 +196,15 @@ echo
 echo "Teclado: Português do Brasil (ABNT2)"
 echo "SSH: habilitado"
 echo
+
+echo "Configuração de rede:"
+ip -4 addr show "$INTERFACE"
+
+echo
 echo "IP do Raspberry Pi:"
 hostname -I
+
 echo
 echo "Use:"
 echo "ssh $(whoami)@$(hostname -I | awk '{print $1}')"
+echo
