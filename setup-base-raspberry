@@ -2,6 +2,14 @@
 
 set -e
 
+# ============================================================
+# CONFIGURAÇÃO RASPBERRY PI / RASPBIAN / RASPBERRY PI OS
+#
+# - Configurando teclado PT-BR
+# - Liberando conexão SSH
+# - Configurando o IP estático local
+# ============================================================
+
 if [ "$EUID" -ne 0 ]; then
     echo "Execute este script como root: sudo $0"
     exit 1
