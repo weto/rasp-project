@@ -1,0 +1,357 @@
+#!/bin/bash
+
+set -e
+
+# ============================================================
+# CONFIGURAÇÃO RASPBERRY PI / RASPBIAN / RASPBERRY PI OS
+#
+# - Instala Git
+# - Instala Docker Engine
+# - Instala Docker Buildx
+# - NÃO instala Docker Compose
+# - Libera porta TCP 8080
+# - Mantém configuração de IP atual
+# - Não configura IP estático
+# ============================================================
+
+if [ "$EUID" -ne 0 ]; then
+    echo "Erro: execute este script como root."
+    echo
+    echo "Exemplo:"
+    echo "  sudo $0"
+    exit 1
+fi
+
+# Usuário que executou sudo
+REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+
+echo
+echo "=============================================="
+echo " CONFIGURAÇÃO DO RASPBERRY PI"
+echo "=============================================="
+echo
+echo "Usuário: $REAL_USER"
+echo
+
+# ============================================================
+# DETECTAR INTERFACE DE REDE
+# ============================================================
+
+echo "==> Detectando interface de rede..."
+
+INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
+
+if [ -z "$INTERFACE" ]; then
+    echo
+    echo "Aviso: não foi possível detectar a interface de rede."
+else
+    CURRENT_IP=$(ip -4 addr show "$INTERFACE" | \
+        awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+
+    CURRENT_GATEWAY=$(ip route | \
+        awk '/default/ {print $3; exit}')
+
+    echo "Interface : $INTERFACE"
+    echo "IP atual  : ${CURRENT_IP:-não detectado}"
+    echo "Gateway   : ${CURRENT_GATEWAY:-não detectado}"
+fi
+
+echo
+
+# ============================================================
+# INSTALAR GIT
+# ============================================================
+
+echo "=============================================="
+echo " INSTALANDO GIT"
+echo "=============================================="
+echo
+
+apt-get update
+
+apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    gnupg
+
+echo
+echo "Git instalado:"
+git --version
+echo
+
+# ============================================================
+# INSTALAR DOCKER
+# ============================================================
+
+echo "=============================================="
+echo " INSTALANDO DOCKER"
+echo "=============================================="
+echo
+
+echo "==> Removendo pacotes Docker antigos/conflitantes..."
+
+apt-get remove -y \
+    docker.io \
+    docker-doc \
+    docker-compose \
+    docker-compose-v2 \
+    podman-docker \
+    containerd \
+    runc \
+    2>/dev/null || true
+
+echo
+echo "==> Instalando dependências..."
+
+apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg
+
+# ============================================================
+# CHAVE DOCKER
+# ============================================================
+
+install -m 0755 -d /etc/apt/keyrings
+
+echo "==> Adicionando chave oficial do Docker..."
+
+curl -fsSL https://download.docker.com/linux/debian/gpg \
+    -o /etc/apt/keyrings/docker.asc
+
+chmod a+r /etc/apt/keyrings/docker.asc
+
+# ============================================================
+# DETECTAR ARQUITETURA E VERSÃO
+# ============================================================
+
+ARCH=$(dpkg --print-architecture)
+
+CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+
+if [ -z "$CODENAME" ]; then
+    CODENAME=$(lsb_release -cs 2>/dev/null || true)
+fi
+
+if [ -z "$CODENAME" ]; then
+    echo
+    echo "Erro: não foi possível detectar a versão do Debian."
+    exit 1
+fi
+
+echo
+echo "Arquitetura: $ARCH"
+echo "Codename:    $CODENAME"
+echo
+
+# ============================================================
+# REPOSITÓRIO DOCKER
+# ============================================================
+
+echo "==> Configurando repositório oficial do Docker..."
+
+cat > /etc/apt/sources.list.d/docker.list <<EOF
+deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $CODENAME stable
+EOF
+
+apt-get update
+
+# ============================================================
+# INSTALAÇÃO DOCKER
+# ============================================================
+
+echo "==> Instalando Docker Engine..."
+
+apt-get install -y \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-buildx-plugin
+
+echo
+echo "Docker instalado:"
+docker --version
+echo
+
+# ============================================================
+# HABILITAR DOCKER
+# ============================================================
+
+echo "==> Habilitando Docker no boot..."
+
+systemctl enable docker
+systemctl enable containerd
+
+systemctl start docker
+
+echo "Docker iniciado."
+echo
+
+# ============================================================
+# ADICIONAR USUÁRIO AO GRUPO DOCKER
+# ============================================================
+
+if id "$REAL_USER" >/dev/null 2>&1; then
+
+    echo "==> Adicionando usuário '$REAL_USER' ao grupo docker..."
+
+    usermod -aG docker "$REAL_USER"
+
+    echo "Usuário adicionado ao grupo docker."
+
+else
+
+    echo
+    echo "Aviso: usuário '$REAL_USER' não encontrado."
+fi
+
+echo
+
+# ============================================================
+# TESTAR DOCKER
+# ============================================================
+
+echo "==> Testando Docker..."
+
+if docker run --rm hello-world >/dev/null 2>&1; then
+
+    echo "Docker funcionando corretamente."
+
+else
+
+    echo
+    echo "Aviso: não foi possível executar o teste Docker."
+    echo
+    echo "Isso pode acontecer porque a sessão atual ainda"
+    echo "não possui as permissões do grupo docker."
+    echo
+    echo "Após fazer logout/login, execute:"
+    echo
+    echo "  docker run hello-world"
+fi
+
+echo
+
+# ============================================================
+# FIREWALL / PORTA 8080
+# ============================================================
+
+echo "=============================================="
+echo " CONFIGURANDO FIREWALL"
+echo "=============================================="
+echo
+
+if command -v ufw >/dev/null 2>&1; then
+
+    echo "UFW já está instalado."
+
+else
+
+    echo "UFW não instalado."
+    echo "Instalando..."
+
+    apt-get install -y ufw
+fi
+
+# Liberar SSH
+ufw allow ssh
+
+# Liberar aplicação na porta 8080
+ufw allow 8080/tcp
+
+echo
+echo "Regras configuradas:"
+echo "  SSH       : permitido"
+echo "  TCP 8080  : permitido"
+echo
+
+echo "O UFW NÃO será ativado automaticamente."
+echo "Isso evita o risco de bloquear o acesso SSH."
+echo
+
+# ============================================================
+# STATUS DOCKER
+# ============================================================
+
+echo "=============================================="
+echo " STATUS DOCKER"
+echo "=============================================="
+echo
+
+systemctl --no-pager status docker | head -n 10
+
+echo
+
+# ============================================================
+# RESULTADO FINAL
+# ============================================================
+
+echo
+echo "=============================================="
+echo " CONFIGURAÇÃO CONCLUÍDA"
+echo "=============================================="
+echo
+
+echo "REDE"
+echo "----------------------------------------------"
+
+if [ -n "$INTERFACE" ]; then
+    echo "Interface : $INTERFACE"
+    echo "IP        : ${CURRENT_IP:-não detectado}"
+    echo "Gateway   : ${CURRENT_GATEWAY:-não detectado}"
+fi
+
+echo "IP estático: NÃO configurado"
+echo
+
+echo "SOFTWARE"
+echo "----------------------------------------------"
+echo "Git       : $(git --version)"
+echo "Docker    : $(docker --version)"
+echo "Buildx    : $(docker buildx version 2>/dev/null || echo 'não disponível')"
+echo
+
+echo "DOCKER COMPOSE"
+echo "----------------------------------------------"
+echo "NÃO instalado."
+echo
+
+echo "FIREWALL"
+echo "----------------------------------------------"
+echo "SSH       : permitido"
+echo "TCP 8080  : permitido"
+echo "UFW       : não ativado automaticamente"
+echo
+
+echo "USUÁRIO DOCKER"
+echo "----------------------------------------------"
+echo "$REAL_USER foi adicionado ao grupo docker."
+echo
+
+echo "IMPORTANTE:"
+echo "Faça logout/login ou reinicie o Raspberry Pi"
+echo "para que a permissão do grupo docker tenha efeito."
+echo
+
+echo "ACESSO SSH"
+echo "----------------------------------------------"
+
+if [ -n "$CURRENT_IP" ]; then
+    echo
+    echo "ssh $REAL_USER@$CURRENT_IP"
+fi
+
+echo
+
+echo "TESTAR DOCKER"
+echo "----------------------------------------------"
+echo
+echo "docker run hello-world"
+echo
+
+echo "TESTAR PORTA 8080"
+echo "----------------------------------------------"
+echo
+echo "curl http://IP_DO_RASPBERRY:8080"
+echo
