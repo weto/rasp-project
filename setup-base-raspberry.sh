@@ -9,9 +9,10 @@ set -e
 # - Habilita SSH
 # - Configura IP estático
 # - Valida Interface, IP, Gateway e DNS
-# - Faz backup da Configuracao de rede
+# - Faz backup da configuração de rede
 # - Comenta configurações antigas
-# - Adiciona nova Configuracao no final do arquivo
+# - Adiciona nova configuração no final do arquivo
+# - DNS = Gateway + DNS secundário
 # ============================================================
 
 # ============================================================
@@ -24,7 +25,7 @@ if [ "$EUID" -ne 0 ]; then
     echo
     echo "Exemplo:"
     echo
-    echo "sudo bash setup-base-raspberry"
+    echo "sudo bash setup-base-raspberry.sh"
     echo
     exit 1
 fi
@@ -122,7 +123,7 @@ echo "=============================================="
 echo
 
 # ============================================================
-# DETECTAR Configuracao ATUAL
+# DETECTAR CONFIGURAÇÃO ATUAL
 # ============================================================
 
 CURRENT_INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
@@ -143,7 +144,7 @@ CURRENT_GATEWAY=$(ip route |
 
 CURRENT_DNS="8.8.8.8"
 
-echo "Configuracao atual detectada:"
+echo "Configuração atual detectada:"
 echo
 echo "  Interface : ${CURRENT_INTERFACE:-não detectada}"
 echo "  IP        : ${CURRENT_IP:-não detectado}"
@@ -218,12 +219,12 @@ while true; do
 done
 
 # ============================================================
-# PERGUNTAR DNS
+# PERGUNTAR DNS SECUNDÁRIO
 # ============================================================
 
 while true; do
 
-    ask "DNS [$CURRENT_DNS]: " DNS
+    ask "DNS secundário [$CURRENT_DNS]: " DNS
 
     if [ -z "$DNS" ]; then
         DNS="$CURRENT_DNS"
@@ -240,26 +241,43 @@ while true; do
 done
 
 # ============================================================
-# MOSTRAR Configuracao
+# DEFINIR SERVIDORES DNS
+#
+# DNS primário  = Gateway
+# DNS secundário = DNS informado
+# ============================================================
+
+DNS_PRIMARY="$GATEWAY"
+DNS_SECONDARY="$DNS"
+
+DNS_SERVERS="$DNS_PRIMARY $DNS_SECONDARY"
+
+# ============================================================
+# MOSTRAR CONFIGURAÇÃO
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       NOVA Configuracao"
+echo "       NOVA CONFIGURAÇÃO"
 echo "=============================================="
 echo
-echo "Interface : $INTERFACE"
-echo "IP        : $STATIC_IP"
-echo "Máscara   : /24"
-echo "Gateway   : $GATEWAY"
-echo "DNS       : $DNS"
+echo "Interface       : $INTERFACE"
+echo "IP              : $STATIC_IP"
+echo "Máscara         : /24"
+echo "Gateway         : $GATEWAY"
+echo "DNS primário    : $DNS_PRIMARY"
+echo "DNS secundário  : $DNS_SECONDARY"
+echo
+echo "Será gravado:"
+echo
+echo "static domain_name_servers=$DNS_SERVERS"
 echo
 
 # ============================================================
 # CONFIRMAR
 # ============================================================
 
-ask "Gravar esta Configuracao? [s/N]: " CONFIRM
+ask "Gravar esta configuração? [s/N]: " CONFIRM
 
 if [[ ! "$CONFIRM" =~ ^[Ss]$ ]]; then
 
@@ -275,7 +293,7 @@ fi
 
 echo
 echo "=============================================="
-echo "       INSTALACAO"
+echo "       INSTALAÇÃO"
 echo "=============================================="
 echo
 
@@ -319,12 +337,12 @@ systemctl enable ssh
 systemctl start ssh
 
 # ============================================================
-# Configuracao DE REDE
+# CONFIGURAÇÃO DE REDE
 # ============================================================
 
 echo
 echo "=============================================="
-echo "       Configuracao DE REDE"
+echo "       CONFIGURAÇÃO DE REDE"
 echo "=============================================="
 echo
 
@@ -354,21 +372,21 @@ if command -v nmcli >/dev/null 2>&1 &&
     fi
 
     echo
-    echo "Configuracao atual do NetworkManager:"
+    echo "Configuração atual do NetworkManager:"
     nmcli connection show "$CONNECTION"
 
     echo
-    echo "==> Gravando nova Configuracao..."
+    echo "==> Gravando nova configuração..."
 
     nmcli connection modify "$CONNECTION" \
         ipv4.method manual \
         ipv4.addresses "$STATIC_IP/24" \
         ipv4.gateway "$GATEWAY" \
-        ipv4.dns "$DNS" \
+        ipv4.dns "$DNS_SERVERS" \
         connection.autoconnect yes
 
     echo
-    echo "==> Aplicando Configuracao..."
+    echo "==> Aplicando configuração..."
 
     nmcli connection up "$CONNECTION"
 
@@ -396,7 +414,7 @@ elif systemctl list-unit-files |
     echo "$BACKUP"
 
     # --------------------------------------------------------
-    # CRIAR ARQUIVO TEMPORÁRIO
+    # ARQUIVO TEMPORÁRIO
     # --------------------------------------------------------
 
     TEMP_FILE=$(mktemp)
@@ -433,14 +451,13 @@ elif systemctl list-unit-files |
     ' "$DHCPCD_CONF" > "$TEMP_FILE"
 
     # --------------------------------------------------------
-    # ADICIONAR NOVA Configuracao NO FINAL
+    # ADICIONAR NOVA CONFIGURAÇÃO NO FINAL
     # --------------------------------------------------------
 
     cat >> "$TEMP_FILE" <<EOF
 
-
 # ============================================================
-# Configuracao DE REDE
+# CONFIGURAÇÃO DE REDE
 # Adicionada pelo setup-base-raspberry
 # Data: $(date '+%Y-%m-%d %H:%M:%S')
 # ============================================================
@@ -448,7 +465,7 @@ elif systemctl list-unit-files |
 interface $INTERFACE
 static ip_address=$STATIC_IP/24
 static routers=$GATEWAY
-static domain_name_servers=$GATEWAY $DNS
+static domain_name_servers=$DNS_SERVERS
 
 # ============================================================
 EOF
@@ -458,20 +475,21 @@ EOF
     # --------------------------------------------------------
 
     echo
-    echo "==> Validando Configuracao antes de gravar..."
+    echo "==> Validando configuração antes de gravar..."
 
-    if grep -q "^interface $INTERFACE$" "$TEMP_FILE" &&
-       grep -q "^static ip_address=$STATIC_IP/24$" "$TEMP_FILE" &&
-       grep -q "^static routers=$GATEWAY$" "$TEMP_FILE" &&
-       grep -q "^static domain_name_servers=$GATEWAY $DNS$" "$TEMP_FILE"; then
+    if grep -Fqx "interface $INTERFACE" "$TEMP_FILE" &&
+       grep -Fqx "static ip_address=$STATIC_IP/24" "$TEMP_FILE" &&
+       grep -Fqx "static routers=$GATEWAY" "$TEMP_FILE" &&
+       grep -Fqx "static domain_name_servers=$DNS_SERVERS" "$TEMP_FILE"; then
 
-        echo "Configuracao validada."
+        echo "Configuração validada."
 
     else
 
         echo
-        echo "ERRO: a nova Configuracao não passou na validação."
+        echo "ERRO: a nova configuração não passou na validação."
         echo
+
         rm -f "$TEMP_FILE"
         exit 1
 
@@ -482,7 +500,7 @@ EOF
     # --------------------------------------------------------
 
     echo
-    echo "==> Gravando Configuracao..."
+    echo "==> Gravando configuração..."
 
     cp "$TEMP_FILE" "$DHCPCD_CONF"
 
@@ -495,17 +513,17 @@ EOF
     echo
     echo "==> Validando arquivo final..."
 
-    if grep -q "^interface $INTERFACE$" "$DHCPCD_CONF" &&
-       grep -q "^static ip_address=$STATIC_IP/24$" "$DHCPCD_CONF" &&
-       grep -q "^static routers=$GATEWAY$" "$DHCPCD_CONF" &&
-       grep -q "^static domain_name_servers=$GATEWAY $DNS$" "$DHCPCD_CONF"; then
+    if grep -Fqx "interface $INTERFACE" "$DHCPCD_CONF" &&
+       grep -Fqx "static ip_address=$STATIC_IP/24" "$DHCPCD_CONF" &&
+       grep -Fqx "static routers=$GATEWAY" "$DHCPCD_CONF" &&
+       grep -Fqx "static domain_name_servers=$DNS_SERVERS" "$DHCPCD_CONF"; then
 
         echo "Arquivo validado com sucesso."
 
     else
 
         echo
-        echo "ERRO: Configuracao não encontrada no arquivo."
+        echo "ERRO: configuração não encontrada no arquivo."
         echo "Restaurando backup..."
 
         cp "$BACKUP" "$DHCPCD_CONF"
@@ -551,7 +569,7 @@ echo "==> Aguardando rede..."
 sleep 5
 
 # ============================================================
-# VERIFICAR Configuracao FINAL
+# VERIFICAR CONFIGURAÇÃO FINAL
 # ============================================================
 
 FINAL_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null |
@@ -568,7 +586,7 @@ FINAL_GATEWAY=$(ip route |
 
 echo
 echo "=============================================="
-echo "       Configuracao CONCLUÍDA"
+echo "       CONFIGURAÇÃO CONCLUÍDA"
 echo "=============================================="
 echo
 echo "Teclado:"
@@ -578,10 +596,17 @@ echo "SSH:"
 echo "  Habilitado"
 echo
 echo "Rede:"
-echo "  Interface : $INTERFACE"
-echo "  IP        : ${FINAL_IP:-$STATIC_IP}"
-echo "  Gateway   : ${FINAL_GATEWAY:-$GATEWAY}"
-echo "  DNS       : $DNS"
+echo "  Interface       : $INTERFACE"
+echo "  IP              : ${FINAL_IP:-$STATIC_IP}"
+echo "  Gateway         : ${FINAL_GATEWAY:-$GATEWAY}"
+echo "  DNS primário    : $DNS_PRIMARY"
+echo "  DNS secundário  : $DNS_SECONDARY"
+echo
+echo "Configuração dhcpcd:"
+echo
+echo "  static ip_address=$STATIC_IP/24"
+echo "  static routers=$GATEWAY"
+echo "  static domain_name_servers=$DNS_SERVERS"
 echo
 echo "=============================================="
 echo
