@@ -448,7 +448,7 @@ elif systemctl list-unit-files |
 interface $INTERFACE
 static ip_address=$STATIC_IP/24
 static routers=$GATEWAY
-static domain_name_servers=$DNS
+static domain_name_servers=$GATEWAY $DNS
 
 # ============================================================
 EOF
@@ -463,7 +463,7 @@ EOF
     if grep -q "^interface $INTERFACE$" "$TEMP_FILE" &&
        grep -q "^static ip_address=$STATIC_IP/24$" "$TEMP_FILE" &&
        grep -q "^static routers=$GATEWAY$" "$TEMP_FILE" &&
-       grep -q "^static domain_name_servers=$DNS$" "$TEMP_FILE"; then
+       grep -q "^static domain_name_servers=$GATEWAY $DNS$" "$TEMP_FILE"; then
 
         echo "Configuração validada."
 
@@ -498,7 +498,7 @@ EOF
     if grep -q "^interface $INTERFACE$" "$DHCPCD_CONF" &&
        grep -q "^static ip_address=$STATIC_IP/24$" "$DHCPCD_CONF" &&
        grep -q "^static routers=$GATEWAY$" "$DHCPCD_CONF" &&
-       grep -q "^static domain_name_servers=$DNS$" "$DHCPCD_CONF"; then
+       grep -q "^static domain_name_servers=$GATEWAY $DNS$" "$DHCPCD_CONF"; then
 
         echo "Arquivo validado com sucesso."
 
