@@ -10,41 +10,32 @@ set -e
 # - Configurando o IP estático local
 # ============================================================
 
+#!/bin/bash
+
+set -e
+
+# ============================================================
+# CONFIGURAÇÃO BASE RASPBERRY PI
+# ============================================================
+
 if [ "$EUID" -ne 0 ]; then
-    echo "Execute este script como root: sudo $0"
+    echo "Execute este script como root:"
+    echo
+    echo "sudo $0"
     exit 1
 fi
 
-echo "==> Atualizando lista de pacotes..."
-apt-get update
-
-echo "==> Instalando suporte ao teclado e SSH..."
-apt-get install -y keyboard-configuration console-setup openssh-server
-
-echo "==> Configurando teclado Português do Brasil ABNT2..."
-cat > /etc/default/keyboard <<'EOF'
-XKBMODEL="abnt2"
-XKBLAYOUT="br"
-XKBVARIANT=""
-XKBOPTIONS=""
-BACKSPACE="guess"
-EOF
-
-echo "==> Habilitando SSH..."
-systemctl enable ssh
-systemctl start ssh
-
 # ============================================================
-# CONFIGURAÇÃO DO IP ESTÁTICO
+# CONFIGURAÇÃO DE REDE - PRIMEIRO PASSO
 # ============================================================
 
 echo
 echo "========================================"
-echo " CONFIGURAÇÃO DO IP ESTÁTICO"
+echo " CONFIGURAÇÃO DE REDE"
 echo "========================================"
 echo
 
-# Detectar interface de rede
+# Detectar interface
 INTERFACE=$(ip route | awk '/default/ {print $5; exit}')
 
 if [ -z "$INTERFACE" ]; then
@@ -52,53 +43,95 @@ if [ -z "$INTERFACE" ]; then
     exit 1
 fi
 
-# Detectar gateway atual
-GATEWAY=$(ip route | awk '/default/ {print $3; exit}')
-
 # Detectar IP atual
 CURRENT_IP=$(ip -4 addr show "$INTERFACE" | \
     awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
 
+# Detectar gateway
+CURRENT_GATEWAY=$(ip route | \
+    awk '/default/ {print $3; exit}')
+
 echo "Interface detectada : $INTERFACE"
 echo "IP atual             : ${CURRENT_IP:-não detectado}"
-echo "Gateway atual        : ${GATEWAY:-não detectado}"
+echo "Gateway atual        : ${CURRENT_GATEWAY:-não detectado}"
 echo
 
-# Perguntar IP
-read -rp "Digite o IP estático que deseja utilizar: " STATIC_IP
+# ============================================================
+# PERGUNTAR IP ESTÁTICO
+# ============================================================
 
-if [ -z "$STATIC_IP" ]; then
-    echo "Erro: nenhum IP foi informado."
-    exit 1
-fi
+while true; do
 
-# Validação básica do IPv4
-if ! [[ "$STATIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    echo "Erro: endereço IP inválido."
-    exit 1
-fi
+    read -rp "Digite o IP estático que deseja utilizar: " STATIC_IP
 
-# Validar cada octeto
-IFS='.' read -r -a OCTETS <<< "$STATIC_IP"
-
-for OCTET in "${OCTETS[@]}"; do
-    if [ "$OCTET" -gt 255 ]; then
-        echo "Erro: endereço IP inválido."
-        exit 1
+    if [ -z "$STATIC_IP" ]; then
+        echo "Erro: informe um IP."
+        echo
+        continue
     fi
+
+    # Validar formato IPv4
+    if ! [[ "$STATIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        echo "Erro: formato de IP inválido."
+        echo
+        continue
+    fi
+
+    # Validar octetos
+    IFS='.' read -ra OCTETS <<< "$STATIC_IP"
+
+    VALID=true
+
+    for OCTET in "${OCTETS[@]}"; do
+        if (( OCTET < 0 || OCTET > 255 )); then
+            VALID=false
+        fi
+    done
+
+    if [ "$VALID" = true ]; then
+        break
+    fi
+
+    echo "Erro: IP inválido."
+    echo
 done
 
-# Caso não tenha gateway, perguntar
+# ============================================================
+# GATEWAY
+# ============================================================
+
+echo
+
+read -rp "Gateway [$CURRENT_GATEWAY]: " GATEWAY
+
 if [ -z "$GATEWAY" ]; then
-    read -rp "Digite o gateway da rede: " GATEWAY
+    GATEWAY="$CURRENT_GATEWAY"
 fi
 
+if [ -z "$GATEWAY" ]; then
+    echo "Erro: gateway não informado."
+    exit 1
+fi
+
+# ============================================================
 # DNS
-DNS="8.8.8.8"
+# ============================================================
+
+echo
+
+read -rp "DNS [8.8.8.8]: " DNS
+
+if [ -z "$DNS" ]; then
+    DNS="8.8.8.8"
+fi
+
+# ============================================================
+# CONFIRMAÇÃO
+# ============================================================
 
 echo
 echo "========================================"
-echo " CONFIGURAÇÃO SELECIONADA"
+echo " CONFIGURAÇÃO DE REDE"
 echo "========================================"
 echo
 echo "Interface : $INTERFACE"
@@ -108,92 +141,132 @@ echo "Gateway   : $GATEWAY"
 echo "DNS       : $DNS"
 echo
 
-read -rp "Aplicar esta configuração? [s/N]: " CONFIRM
+read -rp "Confirma a configuração? [s/N]: " CONFIRM
 
 if [[ ! "$CONFIRM" =~ ^[Ss]$ ]]; then
     echo
-    echo "Configuração de IP cancelada."
-else
+    echo "Configuração cancelada."
+    exit 0
+fi
 
-    echo
-    echo "==> Configurando IP estático..."
+# ============================================================
+# AGORA COMEÇA A INSTALAÇÃO
+# ============================================================
 
-    # --------------------------------------------------------
-    # NetworkManager
-    # --------------------------------------------------------
+echo
+echo "========================================"
+echo " INSTALAÇÃO"
+echo "========================================"
+echo
 
-    if command -v nmcli >/dev/null 2>&1 && \
-       systemctl is-active --quiet NetworkManager; then
+echo "==> Atualizando lista de pacotes..."
+apt-get update
 
-        echo "NetworkManager detectado."
+echo "==> Instalando suporte ao teclado e SSH..."
+apt-get install -y \
+    keyboard-configuration \
+    console-setup \
+    openssh-server
 
-        CONNECTION=$(nmcli -t -f NAME,DEVICE connection show | \
-            awk -F: -v dev="$INTERFACE" '$2 == dev {print $1; exit}')
+# ============================================================
+# TECLADO
+# ============================================================
 
-        if [ -z "$CONNECTION" ]; then
+echo "==> Configurando teclado Português do Brasil ABNT2..."
 
-            echo "Criando conexão para $INTERFACE..."
+cat > /etc/default/keyboard <<'EOF'
+XKBMODEL="abnt2"
+XKBLAYOUT="br"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
 
-            nmcli connection add \
-                type ethernet \
-                ifname "$INTERFACE" \
-                con-name "static-$INTERFACE"
+# ============================================================
+# SSH
+# ============================================================
 
-            CONNECTION="static-$INTERFACE"
-        fi
+echo "==> Habilitando SSH..."
 
-        nmcli connection modify "$CONNECTION" \
-            ipv4.method manual \
-            ipv4.addresses "$STATIC_IP/24" \
-            ipv4.gateway "$GATEWAY" \
-            ipv4.dns "$DNS"
+systemctl enable ssh
+systemctl start ssh
 
-        echo "==> Aplicando configuração..."
+# ============================================================
+# CONFIGURAR IP
+# ============================================================
 
-        nmcli connection up "$CONNECTION"
+echo
+echo "========================================"
+echo " CONFIGURANDO IP ESTÁTICO"
+echo "========================================"
+echo
 
-    # --------------------------------------------------------
-    # dhcpcd
-    # --------------------------------------------------------
+# ------------------------------------------------------------
+# NetworkManager
+# ------------------------------------------------------------
 
-    elif systemctl list-unit-files | grep -q "^dhcpcd.service"; then
+if command -v nmcli >/dev/null 2>&1 && \
+   systemctl is-active --quiet NetworkManager; then
 
-        echo "dhcpcd detectado."
+    echo "NetworkManager detectado."
 
-        BACKUP="/etc/dhcpcd.conf.backup.$(date +%Y%m%d-%H%M%S)"
+    CONNECTION=$(nmcli -t -f NAME,DEVICE connection show | \
+        awk -F: -v dev="$INTERFACE" '$2 == dev {print $1; exit}')
 
-        cp /etc/dhcpcd.conf "$BACKUP"
+    if [ -z "$CONNECTION" ]; then
 
-        echo "Backup criado:"
-        echo "$BACKUP"
+        nmcli connection add \
+            type ethernet \
+            ifname "$INTERFACE" \
+            con-name "static-$INTERFACE"
 
-        cat >> /etc/dhcpcd.conf <<EOF
+        CONNECTION="static-$INTERFACE"
+    fi
 
-# Configuração IP estático adicionada pelo setup
+    nmcli connection modify "$CONNECTION" \
+        ipv4.method manual \
+        ipv4.addresses "$STATIC_IP/24" \
+        ipv4.gateway "$GATEWAY" \
+        ipv4.dns "$DNS"
+
+    nmcli connection up "$CONNECTION"
+
+# ------------------------------------------------------------
+# dhcpcd
+# ------------------------------------------------------------
+
+elif systemctl list-unit-files | grep -q "^dhcpcd.service"; then
+
+    echo "dhcpcd detectado."
+
+    BACKUP="/etc/dhcpcd.conf.backup.$(date +%Y%m%d-%H%M%S)"
+
+    cp /etc/dhcpcd.conf "$BACKUP"
+
+    echo "Backup criado:"
+    echo "$BACKUP"
+
+    cat >> /etc/dhcpcd.conf <<EOF
+
+# Configuração adicionada pelo setup-base-raspberry
 interface $INTERFACE
 static ip_address=$STATIC_IP/24
 static routers=$GATEWAY
 static domain_name_servers=$DNS
 EOF
 
-        echo "==> Reiniciando dhcpcd..."
+    systemctl restart dhcpcd
 
-        systemctl restart dhcpcd
+else
 
-    else
-
-        echo
-        echo "ERRO: não foi possível identificar o gerenciador"
-        echo "de rede (NetworkManager ou dhcpcd)."
-        echo
-        echo "O IP estático NÃO foi configurado."
-        exit 1
-    fi
+    echo
+    echo "ERRO: NetworkManager ou dhcpcd não encontrado."
+    exit 1
 
 fi
 
 # ============================================================
-# RESULTADO
+# FINAL
 # ============================================================
 
 echo
@@ -201,18 +274,14 @@ echo "========================================"
 echo " CONFIGURAÇÃO CONCLUÍDA"
 echo "========================================"
 echo
-echo "Teclado: Português do Brasil (ABNT2)"
-echo "SSH: habilitado"
+echo "Teclado : Português do Brasil (ABNT2)"
+echo "SSH     : habilitado"
+echo "IP      : $STATIC_IP"
+echo "Gateway : $GATEWAY"
+echo "DNS     : $DNS"
 echo
 
-echo "Configuração de rede:"
-ip -4 addr show "$INTERFACE"
-
+echo "Conecte usando:"
 echo
-echo "IP do Raspberry Pi:"
-hostname -I
-
-echo
-echo "Use:"
-echo "ssh $(whoami)@$(hostname -I | awk '{print $1}')"
+echo "ssh $SUDO_USER@$STATIC_IP"
 echo
