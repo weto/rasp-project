@@ -100,6 +100,32 @@ validar_interface() {
 }
 
 # ============================================================
+# FUNÇÃO VERIFICAR SE IP JÁ ESTÁ EM USO NA REDE
+# ============================================================
+
+ip_em_uso() {
+
+    local IP="$1"
+    local IFACE="$2"
+
+    if command -v arping >/dev/null 2>&1; then
+
+        if arping -c 1 -w 1 -I "$IFACE" "$IP" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        return 1
+
+    fi
+
+    if ping -c 1 -W 1 "$IP" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
+# ============================================================
 # INÍCIO
 # ============================================================
 
@@ -185,14 +211,30 @@ while true; do
 
     ask "IP estático: " STATIC_IP
 
-    if validar_ipv4 "$STATIC_IP"; then
+    if ! validar_ipv4 "$STATIC_IP"; then
+        echo
+        echo "Erro: IP inválido."
+        echo "Exemplo: 192.168.1.50"
+        echo
+        continue
+    fi
+
+    if [ -n "$CURRENT_IP" ] && [ "$STATIC_IP" = "$CURRENT_IP" ]; then
         break
     fi
 
     echo
-    echo "Erro: IP inválido."
-    echo "Exemplo: 192.168.1.50"
-    echo
+    echo "==> Verificando se o IP $STATIC_IP já está em uso na rede..."
+
+    if ip_em_uso "$STATIC_IP" "$INTERFACE"; then
+        echo
+        echo "Erro: o IP $STATIC_IP já está em uso na rede."
+        echo "Informe outro IP."
+        echo
+        continue
+    fi
+
+    break
 
 done
 
