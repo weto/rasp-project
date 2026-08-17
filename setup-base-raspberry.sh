@@ -656,3 +656,27 @@ echo
 echo "  ssh $REAL_USER@$STATIC_IP"
 echo
 echo "=============================================="
+
+# ============================================================
+# REINICIAR
+# ============================================================
+
+echo
+
+ask "Deseja reiniciar agora? [s/N]: " REBOOT_CONFIRM
+
+if [[ "$REBOOT_CONFIRM" =~ ^[Ss]$ ]]; then
+
+    echo
+    echo "==> Reiniciando..."
+
+    reboot
+
+else
+
+    echo
+    echo "Reinicialização não realizada."
+    echo "Reinicie manualmente para aplicar todas as alterações."
+    echo
+
+fi
