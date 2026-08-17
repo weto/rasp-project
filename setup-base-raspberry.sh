@@ -223,10 +223,9 @@ while true; do
         break
     fi
 
-    echo
-    echo "==> Verificando se o IP $STATIC_IP já está em uso na rede..."
-
     if ip_em_uso "$STATIC_IP" "$INTERFACE"; then
+        echo
+        echo "==> Verificando se o IP $STATIC_IP já está em uso na rede..."
         echo
         echo "Erro: o IP $STATIC_IP já está em uso na rede."
         echo "Informe outro IP."
